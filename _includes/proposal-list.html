@@ -1,0 +1,12 @@
+{% assign proposals = site.proposals | where_exp: 'item', 'item.hidden != true' | where_exp: 'item', 'item.date <= site.time' %}
+{% assign proposals = proposals | sort: 'date' | reverse %}
+
+<link rel="stylesheet" href="{{ '/assets/css/endorsement.css' | relative_url }}">
+
+<div id="post-list" class="flex-grow-1 px-xl-1">
+  {% for proposal in proposals %}
+    {% include proposal-card.html proposal=proposal %}
+  {% endfor %}
+</div>
+<!-- #post-list -->
+

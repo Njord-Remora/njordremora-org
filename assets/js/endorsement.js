@@ -1,0 +1,354 @@
+/**
+ * ORCiD Endorsement System - Frontend JavaScript
+ * Handles endorsement submission and stats display
+ */
+
+// State management
+let sessionToken = null;
+let proposalId = null;
+let userOrcid = null;
+let userName = null;
+
+/**
+ * Initialize the endorsement page
+ */
+document.addEventListener('DOMContentLoaded', () => {
+  // Extract proposal_id from URL
+  const urlParams = new URLSearchParams(window.location.search);
+  
+  // Check for OAuth callback first
+  const code = urlParams.get('code');
+  const state = urlParams.get('state');
+  
+  if (code && state) {
+    // Restore proposal_id from state parameter
+    proposalId = state;
+    sessionStorage.setItem('proposal_id', proposalId);
+    handleOAuthCallback(code, (data) => {
+      sessionToken = data.sessionToken;
+      userOrcid = data.orcid;
+      userName = data.name;
+
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname + '?proposal=' + proposalId);
+
+      showEndorsementForm();
+    });
+  } else {
+    // Normal page load - get proposal from URL
+    proposalId = urlParams.get('proposal');
+    
+    if (!proposalId) {
+      // Try to get from sessionStorage as fallback
+      proposalId = sessionStorage.getItem('proposal_id');
+      if (!proposalId) {
+        showError('No proposal specified. Please access this page from a proposal post.');
+        return;
+      }
+    }
+    
+    // Store in sessionStorage for OAuth flow
+    sessionStorage.setItem('proposal_id', proposalId);
+    
+    // Check if already authenticated
+    sessionToken = sessionStorage.getItem('sessionToken');
+    if (sessionToken) {
+      // Validate session is still valid
+      validateSession(sessionToken).then(isValid => {
+        if (isValid) {
+          showEndorsementForm();
+        } else {
+          // Session expired, clear and show login
+          sessionStorage.clear();
+          sessionToken = null;
+        }
+      });
+    }
+  }
+
+  // Display proposal info
+  displayProposalInfo();
+
+  // Load and display stats
+  loadStats();
+
+  // Set up event listeners
+  const preAuthConsent = document.getElementById('pre-auth-consent');
+  const signInBtn = document.getElementById('sign-in-btn');
+  
+  // Enable sign-in button when consent checkbox is checked
+  if (preAuthConsent && signInBtn) {
+    preAuthConsent.addEventListener('change', function() {
+      signInBtn.disabled = !this.checked;
+    });
+  }
+  
+  signInBtn?.addEventListener('click', () => startOAuth(proposalId));
+  document.getElementById('endorse-form')?.addEventListener('submit', submitEndorsement);
+  document.getElementById('remove-btn')?.addEventListener('click', removeEndorsement);
+});
+
+/**
+ * Display proposal information
+ */
+function displayProposalInfo() {
+  const proposalInfo = document.getElementById('proposal-info');
+  if (proposalInfo) {
+    const proposalUrl = window.location.origin + window.location.pathname.replace(/endorsement\/$/, 'proposal/') + proposalId + '/';
+    proposalInfo.innerHTML = `
+      <div class="proposal-info-box">
+        <div class="proposal-info-content">
+          <strong>Endorsing:</strong> 
+          <a href="${proposalUrl}" class="proposal-link">${formatProposalId(proposalId)}</a>
+        </div>
+        <div class="stats-inline" id="stats-inline">
+          <span class="stat-loading">Loading...</span>
+        </div>
+      </div>
+    `;
+  }
+}
+
+/**
+ * Show endorsement form
+ */
+function showEndorsementForm() {
+  const authSection = document.getElementById('auth-section');
+  const formSection = document.getElementById('form-section');
+
+  if (authSection) authSection.style.display = 'none';
+  if (formSection) formSection.style.display = 'block';
+
+  // Restore user info from sessionStorage if available
+  if (!userName) {
+    userName = sessionStorage.getItem('userName');
+    userOrcid = sessionStorage.getItem('userOrcid');
+  }
+
+  const userInfo = document.getElementById('user-info');
+  if (userInfo && userName) {
+    userInfo.innerHTML = `
+      <p>
+        Signed in as: <strong>${userName}</strong> (${userOrcid})
+        <button id="logout-btn" class="btn btn-sm" style="margin-left: 10px;">Logout</button>
+      </p>
+    `;
+    
+    // Add logout handler
+    document.getElementById('logout-btn')?.addEventListener('click', logout);
+  }
+
+  // Check if user already endorsed this proposal
+  checkExistingEndorsement();
+}
+
+/**
+ * Check if user has already endorsed this proposal
+ */
+async function checkExistingEndorsement() {
+  try {
+    const response = await fetch(`${WORKER_URL}/api/my-endorsements?sessionToken=${sessionToken}`);
+    const data = await response.json();
+
+    if (data.endorsements) {
+      const existing = data.endorsements.find(e => e.proposal_id === proposalId);
+      if (existing) {
+        // Pre-fill form with existing endorsement data for THIS proposal
+        document.getElementById('job-title').value = existing.jobTitle || '';
+        document.getElementById('employer').value = existing.employer || '';
+
+        // Show remove button
+        const removeBtn = document.getElementById('remove-btn');
+        if (removeBtn) {
+          removeBtn.style.display = 'inline-block';
+        }
+
+        showInfo('You have already endorsed this proposal. You can update your endorsement or remove it.');
+      } else {
+        // No existing endorsement for this proposal
+        // Try to pre-fill from sessionStorage (ORCID data)
+        let jobTitle = sessionStorage.getItem('userJobTitle');
+        let employer = sessionStorage.getItem('userEmployer');
+        
+        // If not in sessionStorage, try to use data from any other endorsement
+        if ((!jobTitle || !employer) && data.endorsements.length > 0) {
+          const anyEndorsement = data.endorsements[0];
+          if (!jobTitle && anyEndorsement.jobTitle) {
+            jobTitle = anyEndorsement.jobTitle;
+          }
+          if (!employer && anyEndorsement.employer) {
+            employer = anyEndorsement.employer;
+          }
+        }
+        
+        if (jobTitle) {
+          document.getElementById('job-title').value = jobTitle;
+        }
+        if (employer) {
+          document.getElementById('employer').value = employer;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to check existing endorsement:', error);
+    
+    // Even if check fails, try to pre-fill with ORCID data
+    const orcidJobTitle = sessionStorage.getItem('userJobTitle');
+    const orcidEmployer = sessionStorage.getItem('userEmployer');
+    
+    if (orcidJobTitle) {
+      document.getElementById('job-title').value = orcidJobTitle;
+    }
+    if (orcidEmployer) {
+      document.getElementById('employer').value = orcidEmployer;
+    }
+  }
+}
+
+/**
+ * Submit endorsement
+ */
+async function submitEndorsement(event) {
+  event.preventDefault();
+
+  const jobTitle = document.getElementById('job-title').value.trim();
+  const employer = document.getElementById('employer').value.trim();
+
+  if (!sessionToken) {
+    showError('Please sign in first');
+    return;
+  }
+
+  // Validate required fields
+  if (!jobTitle || !employer) {
+    showError('Job title and employer/institution are required fields');
+    return;
+  }
+
+  try {
+    showLoading('Submitting endorsement...');
+
+    const response = await fetch(`${WORKER_URL}/api/endorse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionToken,
+        proposal_id: proposalId,
+        jobTitle,
+        employer,
+      }),
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      showSuccess(data.message + '! <a href="' + window.location.origin + window.location.pathname.replace(/endorsement\/$/, 'my-endorsements/') + '">View all your endorsements</a>');
+      loadStats();
+      
+      // Show remove button
+      const removeBtn = document.getElementById('remove-btn');
+      if (removeBtn) {
+        removeBtn.style.display = 'inline-block';
+      }
+    } else {
+      throw new Error(data.error || 'Failed to submit endorsement');
+    }
+  } catch (error) {
+    showError('Failed to submit endorsement: ' + error.message);
+  }
+}
+
+/**
+ * Remove endorsement
+ */
+async function removeEndorsement() {
+  if (!confirm('Are you sure you want to remove your endorsement?')) {
+    return;
+  }
+
+  if (!sessionToken) {
+    showError('Please sign in first');
+    return;
+  }
+
+  try {
+    showLoading('Removing endorsement...');
+
+    const response = await fetch(`${WORKER_URL}/api/endorse`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionToken,
+        proposal_id: proposalId,
+      }),
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      showSuccess('Endorsement removed successfully!');
+      loadStats();
+      
+      // Clear form
+      document.getElementById('job-title').value = '';
+      document.getElementById('employer').value = '';
+      
+      // Hide remove button
+      const removeBtn = document.getElementById('remove-btn');
+      if (removeBtn) {
+        removeBtn.style.display = 'none';
+      }
+    } else {
+      throw new Error(data.error || 'Failed to remove endorsement');
+    }
+  } catch (error) {
+    showError('Failed to remove endorsement: ' + error.message);
+  }
+}
+
+/**
+ * Load and display statistics
+ */
+async function loadStats() {
+  try {
+    const response = await fetch(`${WORKER_URL}/api/stats?proposal_id=${proposalId}`);
+    const data = await response.json();
+
+    // Update inline stats in proposal info box
+    const statsInline = document.getElementById('stats-inline');
+    if (statsInline && data.total !== undefined) {
+      statsInline.innerHTML = `
+        <span class="stat-badge">
+          <span class="stat-number">${data.total}</span> 
+          <span class="stat-label">Endorsement${data.total !== 1 ? 's' : ''}</span>
+        </span>
+      `;
+    }
+    
+    // Also update the old stats div if it exists (for backwards compatibility)
+    const statsDiv = document.getElementById('stats');
+    if (statsDiv) {
+      statsDiv.style.display = 'none';
+    }
+  } catch (error) {
+    console.error('Failed to load stats:', error);
+    const statsInline = document.getElementById('stats-inline');
+    if (statsInline) {
+      statsInline.innerHTML = '<span class="stat-error">—</span>';
+    }
+  }
+}
+
+/**
+ * Validate if session is still valid
+ */
+async function validateSession() {
+  try {
+    const response = await fetch(`${WORKER_URL}/api/my-endorsements?sessionToken=${sessionToken}`);
+    if (response.status === 401 || !response.ok) {
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error('Session validation failed:', error);
+    return false;
+  }
+}
