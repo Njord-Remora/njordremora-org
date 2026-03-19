@@ -25,6 +25,8 @@ social:
   name: Njord & Remora
   links: []
 
+avatar: "assets/logo.svg"
+
 # Build settings
 markdown: kramdown
 highlighter: rouge
