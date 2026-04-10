@@ -49,7 +49,8 @@ That dual impact is central to the concept: Njord pushes the frontier of what ca
 Njord and Remora are best understood as a symbiotic proposal: one instrument maximizes scientific reach on small and challenging samples, and the other expands capacity and access. 
 They are a strategic fit for ESS, aligned with the long-pulse source and the facility’s role as a leading neutron center in Europe.
 
-This post summarizes the main themes from the proposal. A downloadable PDF version will be linked here once the proposal is finalized.
+This post summarizes the main themes from the [proposal]({{ site.url }}{{ site.baseurl }}/assets/pdf/njord_remora_proposal.pdf), the full text is embedded below.
+
 
 ---
 
@@ -59,4 +60,7 @@ If you support this proposal and would like to endorse it with your ORCiD creden
 
 {% include endorsement-widget.html %}
 
-The finalized proposal PDF will be made available for download here once it is ready.
+---
+
+<object data="{{ site.url }}{{ site.baseurl }}/assets/pdf/njord_remora_proposal.pdf" width="100%" height="1000" type="application/pdf"></object>
+
